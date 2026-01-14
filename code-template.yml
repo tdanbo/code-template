@@ -1,1 +1,4 @@
 golangci: 1
+task-go-lint: 1
+task-go-test: 1
+task-tdd-test: 1

@@ -40,11 +40,14 @@ func (m *GolangciLintModule) GetVersion() int {
 	return m.Version
 }
 
-// IsInstalled checks all four conditions:
+func (m *GolangciLintModule) GetKey() string {
+	return moduleKey
+}
+
+// IsInstalled checks all conditions:
 // 1. .golangci.yml exists
 // 2. code-template.yml has golangci entry
-// 3. Taskfile.yml has go-lint task
-// 4. Required binaries are installed in .bin/
+// 3. Required binaries are installed in .bin/
 func (m *GolangciLintModule) IsInstalled() bool {
 	// Check 1: .golangci.yml exists
 	if _, err := os.Stat(golangciFileName); os.IsNotExist(err) {
@@ -57,13 +60,7 @@ func (m *GolangciLintModule) IsInstalled() bool {
 		return false
 	}
 
-	// Check 3: Taskfile.yml has go-lint task
-	hasTask, err := HasGoLintTask()
-	if err != nil || !hasTask {
-		return false
-	}
-
-	// Check 4: Binaries are installed
+	// Check 3: Binaries are installed
 	if !AreBinariesInstalled() {
 		return false
 	}
@@ -111,15 +108,6 @@ func (m *GolangciLintModule) Install() bool {
 		return false
 	}
 
-	// Step 6: Add go-lint task to Taskfile.yml
-	if err := AddGoLintTask(); err != nil {
-		os.Remove(golangciFileName)
-		yamlhelper.RemoveKey(codeTemplateFileName, moduleKey)
-		RollbackBinaries(installed)
-		RemoveFromGitignore()
-		return false
-	}
-
 	return true
 }
 
@@ -137,17 +125,12 @@ func (m *GolangciLintModule) Uninstall() bool {
 		success = false
 	}
 
-	// Step 3: Remove go-lint task from Taskfile.yml
-	if err := RemoveGoLintTask(); err != nil {
-		success = false
-	}
-
-	// Step 4: Remove binaries from .bin/
+	// Step 3: Remove binaries from .bin/
 	if err := RemoveAllBinaries(); err != nil {
 		success = false
 	}
 
-	// Step 5: Remove .bin/ from .gitignore
+	// Step 4: Remove .bin/ from .gitignore
 	if err := RemoveFromGitignore(); err != nil {
 		success = false
 	}

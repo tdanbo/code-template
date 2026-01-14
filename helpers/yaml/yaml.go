@@ -48,6 +48,17 @@ func HasKey(path string, key string) (bool, error) {
 	return exists, nil
 }
 
+// GetValue retrieves the value of a top-level key from a YAML file.
+// Returns the value and true if found, or nil and false if not found.
+func GetValue(path string, key string) (any, bool, error) {
+	data, err := ReadYAML(path)
+	if err != nil {
+		return nil, false, err
+	}
+	value, exists := data[key]
+	return value, exists, nil
+}
+
 // SetKey sets a top-level key in a YAML file, preserving other keys.
 func SetKey(path string, key string, value any) error {
 	data, err := ReadYAML(path)

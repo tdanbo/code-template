@@ -3,4 +3,12 @@ tasks:
     cmds:
     - ./.bin/golangci-lint run ./...
     desc: Run golangci-lint
+  go-test:
+    cmds:
+    - go test ./...
+    desc: Run Go tests
+  tdd-test:
+    cmds:
+    - go test -json ./... 2>&1 | tdd-guard-go -project-root $(pwd)
+    desc: Run Go tests with TDD Guard
 version: "3"

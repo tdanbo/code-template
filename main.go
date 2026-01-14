@@ -1,12 +1,16 @@
 package main
 
 import (
-	"code-template/helpers"
-	"code-template/models"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
+	"code-template/autoinit"
+	"code-template/helpers"
+	"code-template/models"
+
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -17,6 +21,13 @@ var (
 	categories ViewHeader = "categories"
 	modules    ViewHeader = "modules"
 )
+
+// Messages for async operations
+type installResultMsg struct {
+	moduleName string
+	success    bool
+	action     string // "install", "uninstall", or "update"
+}
 
 // Style definitions
 var (
@@ -48,7 +59,14 @@ var (
 				Foreground(secondaryColor).
 				Bold(true)
 
+	checkboxOutdated = lipgloss.NewStyle().
+				Foreground(warningColor).
+				Bold(true)
+
 	checkboxNotInstalled = lipgloss.NewStyle().
+				Foreground(subtleColor)
+
+	versionStyle = lipgloss.NewStyle().
 				Foreground(subtleColor)
 
 	statusSuccessStyle = lipgloss.NewStyle().
@@ -75,10 +93,13 @@ type ViewModel struct {
 	CurrentCategory int
 	StatusMessage   string
 	StatusIsError   bool
+	IsLoading       bool
+	LoadingMessage  string
+	spinner         spinner.Model
 }
 
 func (m ViewModel) Init() tea.Cmd {
-	return nil
+	return m.spinner.Tick
 }
 
 func (m *ViewModel) getCurrentModule() models.Module {
@@ -101,7 +122,42 @@ func (m *ViewModel) updateModuleKeys() {
 }
 func (m ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case installResultMsg:
+		m.IsLoading = false
+		m.LoadingMessage = ""
+		if msg.success {
+			switch msg.action {
+			case "install":
+				m.StatusMessage = fmt.Sprintf("✓ Installed %s", msg.moduleName)
+			case "uninstall":
+				m.StatusMessage = fmt.Sprintf("✓ Uninstalled %s", msg.moduleName)
+			case "update":
+				m.StatusMessage = fmt.Sprintf("✓ Updated %s", msg.moduleName)
+			}
+		} else {
+			m.StatusIsError = true
+			switch msg.action {
+			case "install":
+				m.StatusMessage = fmt.Sprintf("✗ Failed to install %s", msg.moduleName)
+			case "uninstall":
+				m.StatusMessage = fmt.Sprintf("✗ Failed to uninstall %s", msg.moduleName)
+			case "update":
+				m.StatusMessage = fmt.Sprintf("✗ Failed to update %s", msg.moduleName)
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		// Block input while loading
+		if m.IsLoading {
+			return m, nil
+		}
+
 		// Clear status message on any keypress
 		m.StatusMessage = ""
 		m.StatusIsError = false
@@ -123,30 +179,59 @@ func (m ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.CurrentCategory = m.SelectedIdx
 				m.updateModuleKeys()
 				m.SelectedIdx = 0
+			} else if m.SelectedView == "items" {
+				module := m.getCurrentModule()
+				if module != nil {
+					state := helpers.GetModuleState(module)
+					moduleName := module.GetName()
+
+					switch state {
+					case helpers.StateNotInstalled:
+						m.IsLoading = true
+						m.LoadingMessage = fmt.Sprintf("Installing %s...", moduleName)
+						return m, func() tea.Msg {
+							success := module.Install()
+							return installResultMsg{
+								moduleName: moduleName,
+								success:    success,
+								action:     "install",
+							}
+						}
+					case helpers.StateOutdated:
+						m.IsLoading = true
+						m.LoadingMessage = fmt.Sprintf("Updating %s...", moduleName)
+						return m, func() tea.Msg {
+							success := helpers.UpdateModule(module)
+							return installResultMsg{
+								moduleName: moduleName,
+								success:    success,
+								action:     "update",
+							}
+						}
+					case helpers.StateUpToDate:
+						m.StatusMessage = fmt.Sprintf("%s is already up to date", moduleName)
+					}
+				}
 			}
-		case "esc", "backspace":
+		case "esc":
 			if m.SelectedView == "items" {
 				m.SelectedView = "categories"
 				m.SelectedIdx = m.CurrentCategory
 				m.ModuleKeys = nil
 			}
-		case " ":
+		case "delete", "backspace":
 			if m.SelectedView == "items" {
 				module := m.getCurrentModule()
-				if module != nil {
-					if module.IsInstalled() {
-						if module.Uninstall() {
-							m.StatusMessage = fmt.Sprintf("✓ Uninstalled %s", module.GetName())
-						} else {
-							m.StatusMessage = fmt.Sprintf("✗ Failed to uninstall %s", module.GetName())
-							m.StatusIsError = true
-						}
-					} else {
-						if module.Install() {
-							m.StatusMessage = fmt.Sprintf("✓ Installed %s", module.GetName())
-						} else {
-							m.StatusMessage = fmt.Sprintf("✗ Failed to install %s", module.GetName())
-							m.StatusIsError = true
+				if module != nil && module.IsInstalled() {
+					m.IsLoading = true
+					moduleName := module.GetName()
+					m.LoadingMessage = fmt.Sprintf("Uninstalling %s...", moduleName)
+					return m, func() tea.Msg {
+						success := module.Uninstall()
+						return installResultMsg{
+							moduleName: moduleName,
+							success:    success,
+							action:     "uninstall",
 						}
 					}
 				}
@@ -194,16 +279,28 @@ func (m ViewModel) View() string {
 			cursor = "▸ "
 		}
 
-		// For modules view, show checkbox
+		// For modules view, show checkbox with state
 		if m.SelectedView == "items" {
 			module := m.Categories[m.CategoryKeys[m.CurrentCategory]][m.ModuleKeys[i]]
+			state := helpers.GetModuleState(module)
+
 			var checkbox string
-			if module.IsInstalled() {
+			var versionText string
+
+			switch state {
+			case helpers.StateUpToDate:
 				checkbox = checkboxInstalled.Render("[✓]")
-			} else {
+				versionText = versionStyle.Render(fmt.Sprintf(" (v%d)", module.GetVersion()))
+			case helpers.StateOutdated:
+				checkbox = checkboxOutdated.Render("[!]")
+				installedVer := helpers.GetInstalledVersion(module)
+				versionText = versionStyle.Render(fmt.Sprintf(" (v%d → v%d)", installedVer, module.GetVersion()))
+			case helpers.StateNotInstalled:
 				checkbox = checkboxNotInstalled.Render("[ ]")
+				versionText = ""
 			}
-			line = fmt.Sprintf("%s%s %s", cursor, checkbox, item)
+
+			line = fmt.Sprintf("%s%s %s%s", cursor, checkbox, item, versionText)
 		} else {
 			// For categories, show count of modules
 			categoryModules := m.Categories[item]
@@ -225,8 +322,12 @@ func (m ViewModel) View() string {
 		content.WriteString(line + "\n")
 	}
 
-	// Status message
-	if m.StatusMessage != "" {
+	// Loading indicator or status message
+	if m.IsLoading {
+		content.WriteString("\n")
+		content.WriteString(fmt.Sprintf("%s %s", m.spinner.View(), m.LoadingMessage))
+		content.WriteString("\n")
+	} else if m.StatusMessage != "" {
 		content.WriteString("\n")
 		if m.StatusIsError {
 			content.WriteString(statusErrorStyle.Render(m.StatusMessage))
@@ -242,7 +343,7 @@ func (m ViewModel) View() string {
 	if m.SelectedView == "categories" {
 		helpText = "↑/↓ navigate • enter select • q quit"
 	} else {
-		helpText = "↑/↓ navigate • space toggle • esc back • q quit"
+		helpText = "↑/↓ navigate • enter install/update • del uninstall • esc back • q quit"
 	}
 	content.WriteString(helpStyle.Render(helpText))
 
@@ -251,6 +352,11 @@ func (m ViewModel) View() string {
 }
 
 func main() {
+	if err := autoinit.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Initialization failed: %v\n", err)
+		os.Exit(1)
+	}
+
 	content := helpers.GetContent()
 
 	var categoryKeys []string
@@ -259,12 +365,17 @@ func main() {
 	}
 	sort.Strings(categoryKeys)
 
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(primaryColor)
+
 	m := ViewModel{
 		Categories:      content,
 		CategoryKeys:    categoryKeys,
 		SelectedIdx:     0,
 		SelectedView:    "categories",
 		CurrentCategory: 0,
+		spinner:         s,
 	}
 
 	p := tea.NewProgram(m)

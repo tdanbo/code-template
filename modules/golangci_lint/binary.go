@@ -9,9 +9,7 @@ import (
 const (
 	binDir          = ".bin"
 	golangciBinary  = "golangci-lint"
-	taskBinary      = "task"
 	golangciInstall = "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest"
-	taskInstall     = "github.com/go-task/task/v3/cmd/task@latest"
 )
 
 // CheckGoInstalled verifies that Go is available in PATH.
@@ -29,6 +27,17 @@ func EnsureBinDir() error {
 func IsBinaryInstalled(name string) bool {
 	binPath := filepath.Join(binDir, name)
 	_, err := os.Stat(binPath)
+	return err == nil
+}
+
+// IsBinaryAvailable checks if a binary is available either in .bin/ or globally in PATH.
+func IsBinaryAvailable(name string) bool {
+	// Check .bin/ first
+	if IsBinaryInstalled(name) {
+		return true
+	}
+	// Check global PATH
+	_, err := exec.LookPath(name)
 	return err == nil
 }
 
@@ -54,30 +63,25 @@ func RemoveBinary(name string) error {
 	return err
 }
 
-// AreBinariesInstalled checks if both required binaries are installed.
+// AreBinariesInstalled checks if golangci-lint is available (locally or globally).
+// Note: task is checked separately as a global requirement on startup.
 func AreBinariesInstalled() bool {
-	return IsBinaryInstalled(golangciBinary) && IsBinaryInstalled(taskBinary)
+	return IsBinaryAvailable(golangciBinary)
 }
 
-// InstallBinaries installs all required binaries, returns list of installed for rollback.
+// InstallBinaries installs golangci-lint if not already available, returns list of installed for rollback.
+// Note: task is required globally and not installed locally.
 func InstallBinaries() ([]string, error) {
-	binaries := []struct {
-		name string
-		pkg  string
-	}{
-		{golangciBinary, golangciInstall},
-		{taskBinary, taskInstall},
+	var installed []string
+
+	// Only install golangci-lint if not available (locally or globally)
+	if !IsBinaryAvailable(golangciBinary) {
+		if err := InstallBinary(golangciInstall); err != nil {
+			return installed, err
+		}
+		installed = append(installed, golangciBinary)
 	}
 
-	var installed []string
-	for _, bin := range binaries {
-		if !IsBinaryInstalled(bin.name) {
-			if err := InstallBinary(bin.pkg); err != nil {
-				return installed, err
-			}
-			installed = append(installed, bin.name)
-		}
-	}
 	return installed, nil
 }
 
@@ -89,17 +93,12 @@ func RollbackBinaries(installed []string) {
 	cleanupBinDir()
 }
 
-// RemoveAllBinaries removes both binaries (for uninstall).
+// RemoveAllBinaries removes golangci-lint from .bin/ (for uninstall).
+// Note: task is required globally and not managed locally.
 func RemoveAllBinaries() error {
-	var lastErr error
-	if err := RemoveBinary(golangciBinary); err != nil {
-		lastErr = err
-	}
-	if err := RemoveBinary(taskBinary); err != nil {
-		lastErr = err
-	}
+	err := RemoveBinary(golangciBinary)
 	cleanupBinDir()
-	return lastErr
+	return err
 }
 
 // cleanupBinDir removes .bin/ directory if empty.
