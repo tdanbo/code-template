@@ -1,1 +1,6 @@
+tasks:
+  go-lint:
+    cmds:
+    - ./.bin/golangci-lint run ./...
+    desc: Run golangci-lint
 version: "3"
