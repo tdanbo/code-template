@@ -2,6 +2,8 @@ package helpers
 
 import (
 	"code-template/models"
+	frontenddesign "code-template/modules/claude/skills/frontend-design"
+	getshitdone "code-template/modules/claude/workflow/get_shit_done"
 	tddguard "code-template/modules/claude/workflow/tdd_guard"
 	gotstwwailsreact "code-template/modules/language/go/go_ts_tw_wails_react"
 	golangcilint "code-template/modules/linting/go/golangci_lint"
@@ -16,6 +18,8 @@ import (
 // GetModules returns the list of all available modules.
 func GetModules() []models.Module {
 	return []models.Module{
+		frontenddesign.Module,
+		getshitdone.Module,
 		tddguard.Module,
 		gotstwwailsreact.Module,
 		golangcilint.Module,

@@ -1,4 +1,6 @@
+get-shit-done: 1
 golangci: 1
+skill-frontend-design: 1
 task-go-lint: 1
 task-go-test: 1
 task-tdd-test: 1
